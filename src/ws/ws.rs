@@ -14,7 +14,7 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use sha1::Digest;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 
 use crate::utils::creators::{empty, full};
 
@@ -78,9 +78,9 @@ async fn upgraded_ws_conn(upgraded: hyper::upgrade::Upgraded) -> anyhow::Result<
     println!("readbytes: {:?}", frame_bytes.as_slice());
 
     let mut reader = BitReader::new(frame_bytes.as_slice());
-    let mut i=0;
+    let mut i = 0;
     for _ in 0..32 {
-        i=i+1;
+        i = i + 1;
         print!("{}", reader.read_u8(1)?);
         if i % 8 == 0 {
             println!();
@@ -96,23 +96,23 @@ async fn upgraded_ws_conn(upgraded: hyper::upgrade::Upgraded) -> anyhow::Result<
     println!("{:?}", frame);
     match frame.opcode {
         0x0 => {
-            println!("continuation");
+            println!("OPCODE continuation");
         }
         0x1 => {
-            println!("text");
+            println!("OPCODE text");
             let len: usize = frame.payload_length.try_into().unwrap();
             println!("got len={}", len);
-            let mut payload = vec![0; len];
+            let mut payload = vec![0u8;len];
             println!("payload before: {:?}", payload);
             upgraded.read_exact(&mut payload).await?;
             println!("paylaod after: {:?}", payload);
             let decoded = frame.decode(payload.as_mut_slice());
             println!("decoded_raw: {:?}", decoded);
             let s = String::from_utf8(decoded)?;
-            println!("s: {}", s);
+            println!("chatter: {}", s);
         }
         0x2 => {
-            println!("binary data");
+            println!("OPCODE binary data");
         }
         _ => {
             println!("Skipping bytes 3-F");
@@ -262,17 +262,17 @@ struct Frame {
 impl Frame {
     fn from_bytes(frame_bytes: &[u8]) -> Result<Self, anyhow::Error> {
         println!("Frame_bytes len: {}", frame_bytes.len());
-        let mut reader = BitReader::new(frame_bytes);
-        let fin = reader.read_u8(1)?;
-        let rsv1 = reader.read_u8(1)?;
-        let rsv2 = reader.read_u8(1)?;
-        let rsv3 = reader.read_u8(1)?;
-        let opcode = reader.read_u8(4)?;
-        let mask = reader.read_u8(1)?;
+        let mut bit_reader = BitReader::new(frame_bytes);
+        let fin = bit_reader.read_u8(1)?;
+        let rsv1 = bit_reader.read_u8(1)?;
+        let rsv2 = bit_reader.read_u8(1)?;
+        let rsv3 = bit_reader.read_u8(1)?;
+        let opcode = bit_reader.read_u8(4)?;
+        let mask = bit_reader.read_u8(1)?;
         if mask != 1 {
             return Err(anyhow!("Recevied unmasked frame"));
         }
-        let payload_decision = reader.read_u64(7)?;
+        let payload_decision = bit_reader.read_u64(7)?;
         println!("decision: {:?}", payload_decision);
         //TODO Basically here after decoding the length we must return the bytes
         //to the caller so they can pull the rest of the data like masking key and payload data
@@ -281,8 +281,8 @@ impl Frame {
         //bit 16 to 48
         let payload_length = match payload_decision {
             0..=125 => payload_decision,
-            126 => reader.read_u64(16)?,
-            127 => reader.read_u64(64)?,
+            126 => bit_reader.read_u64(16)?,
+            127 => bit_reader.read_u64(64)?,
             _ => return Err(anyhow!("Couldnt parse payload length")),
         };
         let masking_key = Vec::new();
